@@ -1,0 +1,28 @@
+---
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:2.15.1@sha256:99a885f56ca2203a2eb352a5f9e2cd5c1e25786508debd725ad48ebe955d114f
+    container_name: npm-test
+    ports:
+      - "81:81"
+      - "80:80"
+      - "443:443"
+    environment:
+      DB_SQLITE_FILE: "/data/database.sqlite"
+      DISABLE_IPV6: "true"
+      INITIAL_ADMIN_EMAIL: "admin@example.com"
+      INITIAL_ADMIN_PASSWORD: "changeme"
+    volumes:
+      - npm-data:/data
+      - npm-letsencrypt:/etc/letsencrypt
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:81/api/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  npm-data:
+  npm-letsencrypt:

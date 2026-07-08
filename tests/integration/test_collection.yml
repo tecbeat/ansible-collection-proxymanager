@@ -1,0 +1,181 @@
+---
+- name: Test Nginx Proxy Manager Collection
+  hosts: localhost
+  gather_facts: false
+  vars:
+    npm_host: "{{ lookup('env', 'NPM_HOST') | default('localhost', true) }}"
+    npm_port: "{{ lookup('env', 'NPM_PORT') | default('81', true) | int }}"
+    npm_user: "admin@example.com"
+    npm_password: "changeme"
+
+  tasks:
+    - name: Get authentication token
+      nils_ost.proxymanager.token:
+        url: "http://{{ npm_host }}:{{ npm_port }}"
+        user: "{{ npm_user }}"
+        password: "{{ npm_password }}"
+      register: npm_token
+
+    - name: Display token
+      ansible.builtin.debug:
+        msg: "Token obtained successfully: {{ npm_token.token[:20] }}..."
+
+    - name: Create a test redirection
+      nils_ost.proxymanager.redirection:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        domain_name: "old.test.local"
+        forward_host: "https://new.test.local"
+        forward_code: 301
+        preserve_path: true
+        state: present
+      register: redirection_result
+
+    - name: Display redirection result
+      ansible.builtin.debug:
+        var: redirection_result
+
+    - name: Create a test proxy host
+      nils_ost.proxymanager.proxy:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        domain_name: "proxy.test.local"
+        forward_host: "192.168.1.100"
+        forward_port: 8080
+        forward_scheme: http
+        block_exploits: true
+        enable_caching: false
+        state: present
+      register: proxy_result
+
+    - name: Display proxy result
+      ansible.builtin.debug:
+        var: proxy_result
+
+    - name: Update the proxy host
+      nils_ost.proxymanager.proxy:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        domain_name: "proxy.test.local"
+        forward_host: "192.168.1.200"
+        forward_port: 9090
+        forward_scheme: http
+        block_exploits: false
+        state: present
+      register: proxy_update
+
+    - name: Display proxy update result
+      ansible.builtin.debug:
+        msg: "Proxy updated: {{ proxy_update.changed }}"
+
+    - name: Delete the redirection
+      nils_ost.proxymanager.redirection:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        domain_name: "old.test.local"
+        forward_host: "https://new.test.local"
+        forward_code: 301
+        state: absent
+      register: delete_result
+
+    - name: Display deletion result
+      ansible.builtin.debug:
+        msg: "Redirection deleted: {{ delete_result.changed }}"
+
+    - name: Delete the proxy host
+      nils_ost.proxymanager.proxy:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        domain_name: "proxy.test.local"
+        state: absent
+      register: proxy_delete
+
+    - name: Display proxy deletion result
+      ansible.builtin.debug:
+        msg: "Proxy deleted: {{ proxy_delete.changed }}"
+
+    - name: Create an access list
+      nils_ost.proxymanager.access_list:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        name: "integration-test-list"
+        satisfy_any: true
+        pass_auth: false
+        clients:
+          - address: "10.0.0.0/8"
+            directive: allow
+          - address: "192.168.0.0/16"
+            directive: allow
+        state: present
+      register: acl_create
+
+    - name: Assert access list was created
+      ansible.builtin.assert:
+        that:
+          - acl_create.changed
+          - acl_create.item.id is defined
+          - acl_create.item.name == "integration-test-list"
+
+    - name: Re-run access list creation (idempotency check)
+      nils_ost.proxymanager.access_list:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        name: "integration-test-list"
+        satisfy_any: true
+        pass_auth: false
+        clients:
+          - address: "10.0.0.0/8"
+            directive: allow
+          - address: "192.168.0.0/16"
+            directive: allow
+        state: present
+      register: acl_reapply
+
+    - name: Assert access list re-apply was a no-op
+      ansible.builtin.assert:
+        that:
+          - not acl_reapply.changed
+
+    - name: Update access list client rules
+      nils_ost.proxymanager.access_list:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        name: "integration-test-list"
+        satisfy_any: true
+        pass_auth: false
+        clients:
+          - address: "10.0.0.0/8"
+            directive: allow
+        state: present
+      register: acl_update
+
+    - name: Assert access list update happened
+      ansible.builtin.assert:
+        that:
+          - acl_update.changed
+
+    - name: Delete the access list
+      nils_ost.proxymanager.access_list:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        name: "integration-test-list"
+        state: absent
+      register: acl_delete
+
+    - name: Assert access list was deleted
+      ansible.builtin.assert:
+        that:
+          - acl_delete.changed
+
+    - name: Delete access list again (idempotency check)
+      nils_ost.proxymanager.access_list:
+        url: "{{ npm_token.url }}"
+        token: "{{ npm_token.token }}"
+        name: "integration-test-list"
+        state: absent
+      register: acl_delete_again
+
+    - name: Assert double-delete was a no-op
+      ansible.builtin.assert:
+        that:
+          - not acl_delete_again.changed
