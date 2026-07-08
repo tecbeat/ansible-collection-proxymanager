@@ -1,149 +1,162 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Nils Ost <home@nijos.de>
+# Copyright: (c) 2025, Nils Ost (@nils-ost)
+# Copyright: (c) 2025, Samuel Assmann <samuel@tecbeat.de>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+"""
+Ansible module for authenticating with Nginx Proxy Manager API.
+
+This module obtains an authentication token from a Nginx Proxy Manager instance,
+which is required for all other modules in this collection.
+"""
+
 from __future__ import absolute_import, division, print_function
 
-
 __metaclass__ = type
-import requests
-
-from ansible.module_utils.basic import AnsibleModule
-
 
 DOCUMENTATION = r"""
 ---
 module: token
 
-author: Nils Ost (@nils-ost)
+short_description: Authenticate with Nginx Proxy Manager API
 
 version_added: "1.0.0"
 
-short_description: fetch npm API token (login)
-
 description:
-    - For other Nginx Proxy Manager endpoints a valid token is required,
-    - this modules executes a login on an npm instance and returns the corresponding token
+    - Authenticates with an Nginx Proxy Manager instance and returns an API token.
+    - This token is required for authentication with other modules in this collection.
+    - The token can be registered and passed to other modules via the token parameter.
 
 options:
-    protocol:
+    url:
         description:
-            - wether http or https is used on proxymanager
-        required: false
+            - Base URL of the Nginx Proxy Manager instance.
         type: str
-        default: 'http'
-        choices: ['http', 'https']
-    host:
-        description:
-            - host (-address) of proxymanager API endpoint
         required: true
-        type: str
-    port:
-        description:
-            - host-port of proxymanager API endpoint
-        required: false
-        type: int
-        default: 81
     user:
         description:
-            - user (email) to authenticate on proxymanager instance
-        required: true
+            - Username (email address) for authentication.
         type: str
+        required: true
     password:
         description:
-            - password to authenticate on proxymanager instance
-        required: true
+            - Password for authentication.
         type: str
+        required: true
+
+author:
+    - Nils Ost (@nils-ost)
+    - Samuel Assmann (@tecbeat)
+
+seealso:
+    - module: nils_ost.proxymanager.proxy
+    - module: nils_ost.proxymanager.certificate
+    - module: nils_ost.proxymanager.redirection
 """
 
 EXAMPLES = r"""
-# fetch a token
-- name: fetch proxymanager API token
+- name: Authenticate with Nginx Proxy Manager
   nils_ost.proxymanager.token:
-    host: "{{ ansible_host }}"
-    user: "{{ root_email }}"
-    password: "{{ root_password_long }}"
+    url: "http://{{ npm_host }}:81"
+    user: "admin@example.com"
+    password: "{{ npm_password }}"
   register: npm
+  delegate_to: localhost
+
+- name: Authenticate with Nginx Proxy Manager over HTTPS
+  nils_ost.proxymanager.token:
+    url: "https://npm.example.com"
+    user: "admin@example.com"
+    password: "{{ npm_password }}"
+  register: npm
+  delegate_to: localhost
+
+- name: Use token in subsequent tasks
+  nils_ost.proxymanager.proxy:
+    url: "{{ npm.url }}"
+    token: "{{ npm.token }}"
+    domain_name: "example.com"
+    forward_host: "192.168.1.100"
+    forward_port: 80
+    state: present
+  delegate_to: localhost
 """
 
 RETURN = r"""
 url:
     description:
-        - the URL build from protocol, host and port, to be used on other modules
+        - Full URL of the Nginx Proxy Manager instance.
+        - This can be used with other modules in the collection.
     type: str
     returned: always
-    sample: 'http://192.168.0.5:81'
+    sample: 'http://192.168.1.10:81'
 token:
     description:
-        - newly created API token for given user
+        - Authentication token for API access.
+        - This token should be passed to other modules via the token parameter.
     type: str
     returned: always
+    sample: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
 """
+
+from ansible.module_utils.basic import AnsibleModule
+
+from ansible_collections.nils_ost.proxymanager.plugins.module_utils.client import (
+    NginxProxyManagerAuthError,
+    NginxProxyManagerError,
+    authenticate,
+)
 
 
 def run_module():
-    # define available arguments/parameters a user can pass to the module
+    """
+    Execute the token authentication module.
+
+    Validates the input parameters, obtains an API token from Nginx Proxy
+    Manager via the shared ``authenticate`` helper, and returns the token
+    to be reused by other modules in the collection.
+    """
     module_args = dict(
-        protocol=dict(type="str", default="http", choices=["http", "https"]),
-        host=dict(type="str", required=True),
-        port=dict(type="int", required=False, default=81),
+        url=dict(type="str", required=True),
         user=dict(type="str", required=True),
         password=dict(type="str", required=True, no_log=True),
     )
 
-    # seed the result dict in the object
-    # we primarily care about changed and state
-    # changed is if this module effectively modified the target
-    # state will include any data that you want your module to pass back
-    # for consumption, for example, in a subsequent task
     result = dict(
         changed=False,
+        url="",
+        token="",
     )
 
-    # the AnsibleModule object will be our abstraction working with Ansible
-    # this includes instantiation, a couple of common attr would be the
-    # args/params passed to the execution, as well as if the module
-    # supports check mode
     module = AnsibleModule(
         argument_spec=module_args,
         supports_check_mode=True,
     )
 
     try:
-        headers = dict()
-        headers["Content-Type"] = "application/json"
-
-        data = dict(
-            identity=module.params["user"],
-            secret=module.params["password"],
+        normalised_url, token = authenticate(
+            module.params["url"],
+            module.params["user"],
+            module.params["password"],
         )
+    except ImportError as exc:
+        module.fail_json(msg=str(exc), **result)
+    except NginxProxyManagerAuthError as exc:
+        result["url"] = module.params["url"].rstrip("/")
+        module.fail_json(msg=str(exc), **result)
+    except NginxProxyManagerError as exc:
+        result["url"] = module.params["url"].rstrip("/")
+        module.fail_json(msg=str(exc), **result)
 
-        result[
-            "url"
-        ] = f"{module.params['protocol']}://{module.params['host']}:{module.params['port']}"
-        response = requests.post(
-            result["url"] + "/api/tokens",
-            json=data,
-            headers=headers,
-        )
-
-        if not response.status_code == 200:
-            module.fail_json(
-                msg=f"error on fetching API token: {response.text}",
-                **result,
-            )
-
-        if "token" not in response.json():
-            module.fail_json(msg="API response not containing a token", **result)
-
-        result["token"] = response.json().get("token")
-        module.exit_json(**result)
-
-    except Exception as e:
-        module.fail_json(msg=f"Error: {e}", **result)
+    result["url"] = normalised_url
+    result["token"] = token
+    module.exit_json(**result)
 
 
 def main():
+    """Module entry point for Ansible execution."""
     run_module()
 
 

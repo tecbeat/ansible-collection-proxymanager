@@ -1,157 +1,154 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Nils Ost <@nils-ost>
+# Copyright: (c) 2025, Nils Ost (@nils-ost)
+# Copyright: (c) 2025, Samuel Assmann <samuel@tecbeat.de>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
 from __future__ import absolute_import, division, print_function
 
-
 __metaclass__ = type
-import requests
-
-from ansible.module_utils.basic import AnsibleModule
-
 
 DOCUMENTATION = r"""
 ---
 module: certificate
 
-author: Nils Ost (@nils-ost)
+short_description: Manage SSL/TLS certificates in Nginx Proxy Manager
 
 version_added: "1.0.0"
 
-short_description: create or delete npm certificate
-
 description:
-    - This module creates, deletes or just returns a Nginx Proxy Manager certificate
-    - On creation always generates a wildcard certificate for "domain_name"
-    - Creation currently only works for provider "domainoffensive"
-    - For "other" provider it's only checked if certificate is present, and if so, the item is returend
+    - Create, query, or delete SSL/TLS certificates in Nginx Proxy Manager.
+    - Supports Let's Encrypt certificates with DNS challenge validation.
+    - Currently supports the 'domainoffensive' DNS provider for automated certificate generation.
+    - For other providers, the module can check if a certificate exists but cannot create new ones.
+    - Automatically generates wildcard certificates (domain.example.com and *.domain.example.com).
+
+extends_documentation_fragment:
+    - nils_ost.proxymanager.auth
 
 options:
-    url:
-        description:
-            - the full URL of API-Endpoint
-        required: true
-        type: str
-    token:
-        description:
-            - the token used for authentication on API-Endpoint
-        required: true
-        type: str
     domain_name:
         description:
-            - domain of certificate
-        required: true
+            - Primary domain name for the certificate.
+            - When creating a certificate, a wildcard certificate is generated
+              for both the domain and its wildcard subdomain.
         type: str
+        required: true
     provider:
         description:
-            - the provider of the certificate
-        required: false
+            - DNS provider for Let's Encrypt DNS-01 challenge.
+            - Use domainoffensive to automatically create certificates via the Domain Offensive DNS API.
+            - Use other to only check for existing certificates without creating new ones.
         type: str
+        required: false
         default: 'other'
         choices: ['domainoffensive', 'other']
     provider_credentials:
         description:
-            - only required on certificate creation, to validate request on the provider side
-        required: false
+            - API token or credentials for the DNS provider.
+            - Required when provider is domainoffensive and state is present.
+            - Not required when only checking for existing certificates.
         type: str
+        required: false
         default: ''
     state:
         description:
-            - if a certificate for domain_name should be created or deleted
-        required: false
+            - Desired state of the certificate.
+            - present ensures the certificate exists (creates when provider is domainoffensive).
+            - absent ensures the certificate is deleted.
         type: str
+        required: false
         default: 'present'
         choices: ['absent', 'present']
+
+author:
+    - Nils Ost (@nils-ost)
+    - Samuel Assmann (@tecbeat)
+
+seealso:
+    - module: nils_ost.proxymanager.token
+    - module: nils_ost.proxymanager.proxy
 """
 
 EXAMPLES = r"""
-# create a do.de certificate
-- name: create some.domain certificate
+- name: Create Let's Encrypt certificate via Domain Offensive
   nils_ost.proxymanager.certificate:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    provider: 'domainoffensive'
-    provider_credentials: '{{ do_de_token }}'
+    domain_name: "example.com"
+    provider: domainoffensive
+    provider_credentials: "{{ domainoffensive_api_token }}"
     state: present
+  register: cert
   delegate_to: localhost
-  register: some_cert
 
-# check for certificate existance and return item
-- name: check some.domain certificate
+- name: Check if certificate exists
   nils_ost.proxymanager.certificate:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
+    domain_name: "example.com"
     state: present
+  register: cert
   delegate_to: localhost
-  register: some_cert
 
-# delete the formaly created certificate
-- name: delete some.domain certificate
+- name: Delete certificate
   nils_ost.proxymanager.certificate:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    state: absend
+    domain_name: "example.com"
+    state: absent
   delegate_to: localhost
 """
 
 RETURN = r"""
 item:
     description:
-        - the item corresponding to domain_name created or found on npm. might be None in case of errors or deletion
-    type: dict or None
-    returned: always
+        - Certificate object from Nginx Proxy Manager.
+        - Contains details like certificate ID, domain names, expiry date, etc.
+        - Returns null when certificate is deleted or not found.
+    type: dict
+    returned: when certificate exists or is created
+    sample:
+        id: 1
+        created_on: "2025-01-15 10:30:00"
+        modified_on: "2025-01-15 10:30:00"
+        provider: "letsencrypt"
+        domain_names:
+            - "example.com"
+            - "*.example.com"
+        expires_on: "2025-04-15 10:30:00"
 """
 
+from ansible.module_utils.basic import AnsibleModule
 
-def search(url, token, name):
-    uri = f"{url}/api/nginx/certificates"
+from ansible_collections.nils_ost.proxymanager.plugins.module_utils.client import (
+    NginxProxyManagerAPIError,
+    NginxProxyManagerAuthError,
+    NginxProxyManagerClient,
+    NginxProxyManagerError,
+    NginxProxyManagerNotFoundError,
+    search_by_domain,
+)
 
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.get(uri, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-
-    for item in response.json():
-        if name in item.get("domain_names", list()):
-            return (True, item)
-    return (True, None)
-
-
-def create(url, token, data):
-    uri = f"{url}/api/nginx/certificates"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.post(uri, json=data, headers=headers)
-    if not response.status_code == 201:
-        return (False, response.text)
-    return (True, response.json())
-
-
-def delete(url, token, item):
-    uri = f"{url}/api/nginx/certificates/{item}"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.delete(uri, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-    return (True, response.json())
+__all__ = [
+    "NginxProxyManagerAPIError",
+    "NginxProxyManagerAuthError",
+    "NginxProxyManagerClient",
+    "NginxProxyManagerError",
+    "NginxProxyManagerNotFoundError",
+    "search_by_domain",
+]
 
 
 def run_module():
-    # define available arguments/parameters a user can pass to the module
+    """
+    Execute the certificate module.
+
+    This function handles the main logic for managing SSL/TLS certificates.
+    It validates input parameters, manages API communication, and ensures
+    idempotent create/update/delete operations.
+    """
     module_args = dict(
         url=dict(type="str", required=True),
         token=dict(type="str", required=True, no_log=True),
@@ -162,97 +159,117 @@ def run_module():
             default="other",
             choices=["domainoffensive", "other"],
         ),
-        provider_credentials=dict(type="str", required=False, default=""),
+        provider_credentials=dict(type="str", required=False, default="", no_log=True),
         state=dict(type="str", default="present", choices=["absent", "present"]),
     )
 
-    # seed the result dict in the object
-    # we primarily care about changed and state
-    # changed is if this module effectively modified the target
-    # state will include any data that you want your module to pass back
-    # for consumption, for example, in a subsequent task
     result = dict(
         changed=False,
         item=None,
     )
 
-    # the AnsibleModule object will be our abstraction working with Ansible
-    # this includes instantiation, a couple of common attr would be the
-    # args/params passed to the execution, as well as if the module
-    # supports check mode
     module = AnsibleModule(
         argument_spec=module_args,
         supports_check_mode=True,
     )
 
     try:
-        url = module.params["url"]
-        token = module.params["token"]
+        if module.params["provider"] == "domainoffensive":
+            if not module.params.get("provider_credentials"):
+                module.fail_json(
+                    msg="provider_credentials is required when using domainoffensive provider",
+                    **result,
+                )
 
-        success, item = search(url, token, module.params["domain_name"])
-        if not success:
-            module.fail_json(msg=f"error on searching for item: {item}", **result)
+        client = NginxProxyManagerClient(
+            url=module.params["url"],
+            token=module.params["token"],
+        )
 
-        if module.params["state"] == "present" and item is not None:
-            result["item"] = item
-            module.exit_json(
-                msg=f"found item is already present: {item['id']}",
+        certificates = client.get("/api/nginx/certificates")
+        item = search_by_domain(certificates, module.params["domain_name"])
+
+        if module.params["state"] == "present":
+            if item is not None:
+                result["item"] = item
+                module.exit_json(
+                    msg="Certificate already exists with ID {0}".format(item["id"]),
+                    **result,
+                )
+
+            if module.params["provider"] == "domainoffensive":
+                data = dict(
+                    domain_names=[
+                        module.params["domain_name"],
+                        "*.{0}".format(module.params["domain_name"]),
+                    ],
+                    provider="letsencrypt",
+                    meta=dict(
+                        dns_challenge=True,
+                        dns_provider="domainoffensive",
+                        dns_provider_credentials=(
+                            "dns_domainoffensive_api_token = {0}".format(
+                                module.params["provider_credentials"]
+                            )
+                        ),
+                    ),
+                )
+
+                if not module.check_mode:
+                    item = client.post("/api/nginx/certificates", data)
+                    result["changed"] = True
+                    result["item"] = item
+                    module.exit_json(
+                        msg="Created certificate with ID {0}".format(item["id"]), **result
+                    )
+                else:
+                    result["changed"] = True
+                    result["item"] = data
+                    module.exit_json(msg="Would have created certificate", **result)
+
+            module.fail_json(
+                msg=(
+                    "Certificate for domain '{0}' not found and "
+                    "provider is set to 'other'. Cannot create certificate.".format(
+                        module.params["domain_name"]
+                    )
+                ),
                 **result,
             )
 
-        elif (
-            module.params["state"] == "present"
-            and module.params.get("provider", "other") == "domainoffensive"
-        ):
-            data = dict(
-                domain_names=[
-                    module.params["domain_name"],
-                    f"*.{module.params['domain_name']}",
-                ],
-                provider="letsencrypt",
-                meta=dict(
-                    dns_challenge=True,
-                    dns_provider="domainoffensive",
-                    dns_provider_credentials=f"dns_domainoffensive_api_token = {module.params.get('provider_credentials', '')}",
-                ),
-            )
-
-            if not module.check_mode:
-                success, item = create(url, token, data)
-                if not success:
-                    module.fail_json(
-                        msg=f"error on createing new item: {item}",
-                        **result,
-                    )
-                result["changed"] = True
-                result["item"] = item
-                module.exit_json(msg=f"created item: {item['id']}", **result)
-            else:
-                result["changed"] = True
-                result["item"] = data
-                module.exit_json(msg="would have created a item", **result)
-
-        elif module.params["state"] == "present":
-            module.fail_json(msg="no item found for other provider", **result)
-
-        else:
+        else:  # state == 'absent'
             if item is None:
-                module.exit_json(msg="item is already deleted", **result)
+                module.exit_json(
+                    msg="Certificate already deleted or does not exist", **result
+                )
+
             if not module.check_mode:
-                success, item = delete(url, token, item.get("id"))
-                if not success:
-                    module.fail_json(msg=f"error on deleteing item: {item}", **result)
+                client.delete("/api/nginx/certificates/{0}".format(item["id"]))
                 result["changed"] = True
-                module.exit_json(msg="deleted item", **result)
+                module.exit_json(
+                    msg="Deleted certificate with ID {0}".format(item["id"]), **result
+                )
             else:
                 result["changed"] = True
-                module.exit_json(msg="would have deleted a item", **result)
+                module.exit_json(
+                    msg="Would have deleted certificate with ID {0}".format(item["id"]),
+                    **result,
+                )
 
-    except Exception as e:
-        module.fail_json(msg=f"Error: {e}", **result)
+    except NginxProxyManagerAPIError as e:
+        error_msg = "API error: {0} (HTTP {1})".format(str(e), e.status_code)
+        if e.response_text:
+            error_msg += " - Response: {0}".format(e.response_text)
+        module.fail_json(
+            msg=error_msg,
+            **result,
+        )
+    except NginxProxyManagerError as e:
+        module.fail_json(msg="Nginx Proxy Manager error: {0}".format(str(e)), **result)
 
 
 def main():
+    """Module entry point for Ansible execution."""
     run_module()
 
 

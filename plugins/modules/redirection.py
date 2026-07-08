@@ -1,220 +1,222 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Nils Ost <home@nijos.de>
+# Copyright: (c) 2025, Nils Ost (@nils-ost)
+# Copyright: (c) 2025, Samuel Assmann <samuel@tecbeat.de>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
 from __future__ import absolute_import, division, print_function
 
-
 __metaclass__ = type
-import requests
-
-from ansible.module_utils.basic import AnsibleModule
-
 
 DOCUMENTATION = r"""
 ---
 module: redirection
 
-author: Nils Ost (@nils-ost)
+short_description: Manage HTTP redirections in Nginx Proxy Manager
 
 version_added: "1.0.0"
 
-short_description: create, update or delete npm redirection
-
 description:
-    - This module creates, updates, deletes or just returns a Nginx Proxy Manager redirection host
+    - Create, update, or delete HTTP redirection hosts in Nginx Proxy Manager.
+    - Redirects can preserve the requested path or redirect to a fixed destination.
+    - Supports multiple HTTP redirect status codes (301, 302, 307, 308, etc.).
+    - Can optionally force SSL and enable HTTP/2 support.
+
+extends_documentation_fragment:
+    - nils_ost.proxymanager.auth
 
 options:
-    url:
-        description:
-            - the full URL of API-Endpoint
-        required: true
-        type: str
-    token:
-        description:
-            - the token used for authentication on API-Endpoint
-        required: true
-        type: str
     domain_name:
         description:
-            - domain to be redirected
-        required: true
+            - Domain name to redirect from.
         type: str
+        required: true
     forward_host:
         description:
-            - destination of redirection
-        required: false (true if state equals present)
+            - Destination URL or domain to redirect to.
+            - Required when state is present.
+            - Can include port number, for example example.com:8080.
         type: str
+        required: false
     forward_code:
         description:
-            - http return code signaling the redirection
-        required: false
+            - HTTP status code for the redirection.
+            - 301 is Moved Permanently (default, recommended for SEO).
+            - 302 is Found (temporary redirect).
+            - 307 is Temporary Redirect (preserves HTTP method).
+            - 308 is Permanent Redirect (preserves HTTP method).
         type: int
+        required: false
         default: 301
         choices: [300, 301, 302, 303, 307, 308]
     forward_scheme:
         description:
-            - protocol to be used for redirection destination
-        required: false
+            - Protocol scheme for the redirection destination.
+            - auto determines the scheme automatically from the request.
+            - http forces HTTP.
+            - https forces HTTPS.
         type: str
+        required: false
         default: 'auto'
         choices: ['auto', 'http', 'https']
     preserve_path:
         description:
-            - if the requested path sould be forwareded to destination or not
-        required: false
+            - Whether to preserve the requested path in the redirection.
+            - If true, the requested path is appended to the forward host.
+            - If false, all requests redirect to the exact forward host.
         type: bool
+        required: false
         default: false
     certificate_id:
         description:
-            - id of npm certificate to be used
-        required: false
+            - ID of the SSL certificate to use for HTTPS.
+            - Set to 0 to use no certificate (HTTP only).
+            - Required when force_ssl is true.
         type: int
+        required: false
         default: 0
     force_ssl:
         description:
-            - if ssl should be forced
-        required: false
+            - Force redirect HTTP requests to HTTPS.
         type: bool
+        required: false
         default: false
     http2_support:
         description:
-            - if http/2 support should be enabled
-        required: false
+            - Enable HTTP/2 protocol support.
         type: bool
+        required: false
         default: false
     state:
         description:
-            - if a redirection for domain_name should be created or deleted
-        required: false
+            - Desired state of the redirection host.
+            - present ensures the redirection exists (creates or updates).
+            - absent ensures the redirection is deleted.
         type: str
+        required: false
         default: 'present'
         choices: ['absent', 'present']
+
+author:
+    - Nils Ost (@nils-ost)
+    - Samuel Assmann (@tecbeat)
+
+seealso:
+    - module: nils_ost.proxymanager.token
+    - module: nils_ost.proxymanager.proxy
+    - module: nils_ost.proxymanager.certificate
 """
 
 EXAMPLES = r"""
-# create redirection
-- name: create npm redirect
+- name: Create simple HTTP redirection
   nils_ost.proxymanager.redirection:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    forward_host: "192.168.1.234:81"
+    domain_name: "old.example.com"
+    forward_host: "new.example.com"
     state: present
   delegate_to: localhost
-  register: some_redirection
 
-# change forward_code and preserve_path of the formaly created redirection
-- name: update npm redirect
+- name: Create redirection with path preservation
   nils_ost.proxymanager.redirection:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    forward_host: "192.168.1.234:81"
-    forward_code: 300
-    preserve_path: True
+    domain_name: "redirect.example.com"
+    forward_host: "destination.example.com"
+    forward_code: 301
+    preserve_path: true
     state: present
   delegate_to: localhost
-  register: some_redirection
 
-# delete the formaly created and updated redirection
-- name: delete npm redirect
+- name: Create HTTPS redirection with custom status code
   nils_ost.proxymanager.redirection:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    state: absend
+    domain_name: "temp-redirect.example.com"
+    forward_host: "new-location.example.com"
+    forward_code: 302
+    forward_scheme: https
+    certificate_id: "{{ cert.item.id }}"
+    force_ssl: true
+    http2_support: true
+    state: present
+  delegate_to: localhost
+
+- name: Update existing redirection
+  nils_ost.proxymanager.redirection:
+    url: "{{ npm.url }}"
+    token: "{{ npm.token }}"
+    domain_name: "redirect.example.com"
+    forward_host: "updated-destination.example.com"
+    forward_code: 308
+    preserve_path: true
+    state: present
+  delegate_to: localhost
+
+- name: Delete redirection
+  nils_ost.proxymanager.redirection:
+    url: "{{ npm.url }}"
+    token: "{{ npm.token }}"
+    domain_name: "old.example.com"
+    state: absent
   delegate_to: localhost
 """
 
 RETURN = r"""
 item:
     description:
-        - the item corresponding to domain_name created, updated or found on npm. might be None in case of errors or deletion
-    type: dict or None
-    returned: always
+        - Redirection host object from Nginx Proxy Manager.
+        - Contains details like redirection ID, domain names, forward settings, etc.
+        - Returns null when redirection is deleted or in check mode for creation.
+    type: dict
+    returned: when redirection exists or is created
+    sample:
+        id: 1
+        created_on: "2025-01-15 10:30:00"
+        modified_on: "2025-01-15 10:30:00"
+        domain_names:
+            - "old.example.com"
+        forward_http_code: 301
+        forward_scheme: "https"
+        forward_domain_name: "new.example.com"
+        preserve_path: true
+        certificate_id: 1
+        ssl_forced: false
+        http2_support: false
 """
 
+from ansible.module_utils.basic import AnsibleModule
 
-def data_as_expected(d1, d2):
-    keys = [
-        "domain_names",
-        "forward_http_code",
-        "forward_scheme",
-        "forward_domain_name",
-        "preserve_path",
-        "certificate_id",
-        "ssl_forced",
-        "http2_support",
-    ]
-    for k in keys:
-        if k not in d1:
-            return False
-        if k not in d2:
-            return False
-        if not d1.get(k) == d2.get(k):
-            return False
-    return True
+from ansible_collections.nils_ost.proxymanager.plugins.module_utils.client import (
+    NginxProxyManagerAPIError,
+    NginxProxyManagerAuthError,
+    NginxProxyManagerClient,
+    NginxProxyManagerError,
+    NginxProxyManagerNotFoundError,
+    compare_dicts,
+    search_by_domain,
+)
 
-
-def search(url, token, name):
-    uri = f"{url}/api/nginx/redirection-hosts"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.get(uri, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-
-    for item in response.json():
-        if name in item.get("domain_names", list()):
-            return (True, item)
-    return (True, None)
-
-
-def create(url, token, data):
-    uri = f"{url}/api/nginx/redirection-hosts"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.post(uri, json=data, headers=headers)
-    if not response.status_code == 201:
-        return (False, response.text)
-    return (True, response.json())
-
-
-def update(url, token, item, data):
-    uri = f"{url}/api/nginx/redirection-hosts/{item}"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.put(uri, json=data, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-    return (True, response.json())
-
-
-def delete(url, token, item):
-    uri = f"{url}/api/nginx/redirection-hosts/{item}"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.delete(uri, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-    return (True, response.json())
+__all__ = [
+    "NginxProxyManagerAPIError",
+    "NginxProxyManagerAuthError",
+    "NginxProxyManagerClient",
+    "NginxProxyManagerError",
+    "NginxProxyManagerNotFoundError",
+    "compare_dicts",
+    "search_by_domain",
+]
 
 
 def run_module():
-    # define available arguments/parameters a user can pass to the module
+    """
+    Execute the redirection module.
+
+    This function handles the main logic for managing HTTP redirections.
+    It validates input parameters, manages API communication, and ensures
+    idempotent create/update/delete operations.
+    """
     module_args = dict(
         url=dict(type="str", required=True),
         token=dict(type="str", required=True, no_log=True),
@@ -239,41 +241,54 @@ def run_module():
         state=dict(type="str", default="present", choices=["absent", "present"]),
     )
 
-    # seed the result dict in the object
-    # we primarily care about changed and state
-    # changed is if this module effectively modified the target
-    # state will include any data that you want your module to pass back
-    # for consumption, for example, in a subsequent task
     result = dict(
         changed=False,
         item=None,
     )
 
-    # the AnsibleModule object will be our abstraction working with Ansible
-    # this includes instantiation, a couple of common attr would be the
-    # args/params passed to the execution, as well as if the module
-    # supports check mode
     module = AnsibleModule(
         argument_spec=module_args,
         supports_check_mode=True,
     )
 
     try:
-        url = module.params["url"]
-        token = module.params["token"]
-
         if (
             module.params["state"] == "present"
             and module.params.get("forward_host") is None
         ):
             module.fail_json(
-                msg='"forward_host" is required if "state" is "present"',
+                msg="'forward_host' is required when state is 'present'",
                 **result,
             )
 
-        success, item = search(url, token, module.params["domain_name"])
-        if not success:
-            module.fail_json(msg=f"error on searching for item: {item}", **result)
+        if module.params["state"] == "present":
+            errors = []
+
+            if module.params.get("force_ssl") and module.params.get("certificate_id", 0) == 0:
+                errors.append(
+                    "force_ssl requires a valid certificate_id (currently 0). "
+                    "Please specify a certificate_id to enable SSL."
+                )
+
+            if module.params.get("http2_support") and module.params.get("certificate_id", 0) == 0:
+                errors.append(
+                    "http2_support requires a valid certificate_id (currently 0). "
+                    "HTTP/2 is typically used with TLS and requires a certificate."
+                )
+
+            if errors:
+                module.fail_json(
+                    msg="SSL configuration validation failed: " + "; ".join(errors),
+                    **result,
+                )
+
+        client = NginxProxyManagerClient(
+            url=module.params["url"],
+            token=module.params["token"],
+        )
+
+        redirections = client.get("/api/nginx/redirection-hosts")
+        item = search_by_domain(redirections, module.params["domain_name"])
 
         if module.params["state"] == "present":
             data = dict(
@@ -294,63 +309,86 @@ def run_module():
 
             if item is None:
                 if not module.check_mode:
-                    success, item = create(url, token, data)
-                    if not success:
-                        module.fail_json(
-                            msg=f"error on createing new item: {item}",
-                            **result,
-                        )
+                    item = client.post("/api/nginx/redirection-hosts", data)
                     result["changed"] = True
                     result["item"] = item
-                    module.exit_json(msg=f"created item: {item['id']}", **result)
+                    module.exit_json(
+                        msg="Created redirection with ID {0}".format(item["id"]), **result
+                    )
                 else:
                     result["changed"] = True
                     result["item"] = data
-                    module.exit_json(msg="would have created a item", **result)
+                    module.exit_json(msg="Would have created redirection", **result)
 
             else:
+                comparison_keys = [
+                    "domain_names",
+                    "forward_http_code",
+                    "forward_scheme",
+                    "forward_domain_name",
+                    "preserve_path",
+                    "certificate_id",
+                    "ssl_forced",
+                    "http2_support",
+                ]
+
                 if not module.check_mode:
-                    if data_as_expected(data, item):
+                    if compare_dicts(data, item, comparison_keys):
                         result["item"] = item
                         module.exit_json(
-                            msg=f"item is already as expected: {item['id']}",
+                            msg="Redirection already as expected with ID {0}".format(item["id"]),
                             **result,
                         )
-                    success, item = update(url, token, item.get("id"), data)
-                    if not success:
-                        module.fail_json(
-                            msg=f"error on updateing existing item: {item}",
-                            **result,
-                        )
+
+                    item = client.put(
+                        "/api/nginx/redirection-hosts/{0}".format(item["id"]), data
+                    )
                     result["changed"] = True
                     result["item"] = item
-                    module.exit_json(msg=f"updated item: {item['id']}", **result)
+                    module.exit_json(
+                        msg="Updated redirection with ID {0}".format(item["id"]), **result
+                    )
                 else:
                     result["changed"] = True
                     result["item"] = data
                     module.exit_json(
-                        msg=f"would have updated item: {item['id']}",
+                        msg="Would have updated redirection with ID {0}".format(item["id"]),
                         **result,
                     )
 
-        else:
+        else:  # state == 'absent'
             if item is None:
-                module.exit_json(msg="item is already deleted", **result)
+                module.exit_json(
+                    msg="Redirection already deleted or does not exist", **result
+                )
+
             if not module.check_mode:
-                success, item = delete(url, token, item.get("id"))
-                if not success:
-                    module.fail_json(msg=f"error on deleteing item: {item}", **result)
+                client.delete("/api/nginx/redirection-hosts/{0}".format(item["id"]))
                 result["changed"] = True
-                module.exit_json(msg="deleted item", **result)
+                module.exit_json(
+                    msg="Deleted redirection with ID {0}".format(item["id"]), **result
+                )
             else:
                 result["changed"] = True
-                module.exit_json(msg="would have deleted a item", **result)
+                module.exit_json(
+                    msg="Would have deleted redirection with ID {0}".format(item["id"]),
+                    **result,
+                )
 
-    except Exception as e:
-        module.fail_json(msg=f"Error: {e}", **result)
+    except NginxProxyManagerAPIError as e:
+        error_msg = "API error: {0} (HTTP {1})".format(str(e), e.status_code)
+        if e.response_text:
+            error_msg += " - Response: {0}".format(e.response_text)
+        module.fail_json(
+            msg=error_msg,
+            **result,
+        )
+    except NginxProxyManagerError as e:
+        module.fail_json(msg="Nginx Proxy Manager error: {0}".format(str(e)), **result)
 
 
 def main():
+    """Module entry point for Ansible execution."""
     run_module()
 
 

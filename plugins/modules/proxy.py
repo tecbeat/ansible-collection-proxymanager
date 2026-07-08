@@ -1,173 +1,209 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-# Copyright: (c) 2025, Nils Ost <@nils-ost>
+# Copyright: (c) 2025, Nils Ost (@nils-ost)
+# Copyright: (c) 2025, Samuel Assmann <samuel@tecbeat.de>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
 from __future__ import absolute_import, division, print_function
 
-
 __metaclass__ = type
-import requests
-
-from ansible.module_utils.basic import AnsibleModule
-
 
 DOCUMENTATION = r"""
 ---
 module: proxy
 
-author: Nils Ost (@nils-ost)
+author:
+    - Nils Ost (@nils-ost)
+    - Samuel Assmann (@tecbeat)
 
 version_added: "1.0.0"
 
-short_description: create, update or delete npm proxy
+short_description: Manage Nginx Proxy Manager proxy hosts
 
 description:
-    - This module creates, updates, deletes or just returns a Nginx Proxy Manager proxy host
+    - Create, update, or delete proxy hosts in Nginx Proxy Manager.
+    - A proxy host forwards HTTP/HTTPS traffic from a domain to a backend service.
+    - Supports SSL certificates, custom nginx configuration, and custom location blocks.
+
+extends_documentation_fragment:
+    - nils_ost.proxymanager.auth
 
 options:
-    url:
-        description:
-            - the full URL of API-Endpoint
-        required: true
-        type: str
-    token:
-        description:
-            - the token used for authentication on API-Endpoint
-        required: true
-        type: str
     domain_name:
         description:
-            - domain to be proxyed
+            - Domain name to be proxied.
+            - This is the domain that will be matched for incoming requests.
         required: true
         type: str
     forward_host:
         description:
-            - backend destination of proxy
-        required: false (true if state equals present)
+            - Backend destination hostname or IP address.
+            - Required when state is present.
+        required: false
         type: str
     forward_scheme:
         description:
-            - protocol to be used for communication with backend destination
+            - Protocol to use for communication with the backend.
         required: false
         type: str
-        default: 'http'
+        default: http
         choices: ['http', 'https']
     forward_port:
         description:
-            - backend destination port of proxy
+            - Backend destination port number.
         required: false
         type: int
         default: 80
     enable_caching:
         description:
-            - if assets should be cached by npm
+            - Whether to enable asset caching.
         required: false
         type: bool
         default: false
     allow_websockets:
         description:
-            - if websocket support should be enabled
+            - Whether to enable WebSocket support.
         required: false
         type: bool
         default: false
     certificate_id:
         description:
-            - id of npm certificate to be used
+            - ID of the SSL certificate to use.
+            - Use 0 for no certificate (HTTP only).
         required: false
         type: int
         default: 0
     force_ssl:
         description:
-            - if ssl should be forced
+            - Whether to force SSL (redirect HTTP to HTTPS).
+            - Requires a valid certificate_id.
         required: false
         type: bool
         default: false
     http2_support:
         description:
-            - if http/2 support should be enabled
+            - Whether to enable HTTP/2 support.
+            - Requires a valid certificate_id.
         required: false
         type: bool
         default: false
     hsts_enabled:
         description:
-            - if HTTP Strict Transport Security should be enabled
-            - "NOTE: HSTS only works when I(force_ssl) is set to C(true)"
+            - Whether to enable HTTP Strict Transport Security (HSTS).
+            - Requires force_ssl to be true.
         required: false
         type: bool
         default: false
     hsts_subdomains:
         description:
-            - if HSTS should include subdomains
-            - "NOTE: Only effective when I(hsts_enabled) and I(force_ssl) are both C(true)"
+            - Whether HSTS should apply to subdomains.
+            - Requires both hsts_enabled and force_ssl to be true.
         required: false
         type: bool
         default: false
     trust_forwarded_proto:
         description:
-            - if X-Forwarded-Proto header should be trusted
+            - Whether to trust the X-Forwarded-Proto header.
         required: false
         type: bool
         default: false
     advanced_config:
         description:
-            - custom nginx configuration to be added to the proxy host
+            - Custom nginx configuration to include in the proxy host block.
+            - Will be inserted into the server block.
         required: false
         type: str
         default: ''
     block_exploits:
         description:
-            - if common exploits should be blocked
+            - Whether to block common exploit attempts.
         required: false
         type: bool
         default: false
     access_list_id:
         description:
-            - id of npm access list to be used
+            - ID of the access list to apply.
+            - Use 0 for no access restrictions.
         required: false
         type: int
         default: 0
+    locations:
+        description:
+            - List of custom location blocks for the proxy host.
+            - Each location can forward to different backends.
+        required: false
+        type: list
+        elements: dict
+        default: []
+        suboptions:
+            path:
+                description:
+                    - URL path for this location block.
+                    - For example /api or /admin.
+                required: true
+                type: str
+            forward_scheme:
+                description:
+                    - Protocol to use for this location.
+                required: false
+                type: str
+                default: http
+                choices: ['http', 'https']
+            forward_host:
+                description:
+                    - Backend destination host for this location.
+                required: true
+                type: str
+            forward_port:
+                description:
+                    - Backend destination port for this location.
+                required: true
+                type: int
+            advanced_config:
+                description:
+                    - Custom nginx configuration for this location block.
+                required: false
+                type: str
+                default: ''
     state:
         description:
-            - if a proxy for domain_name should be created or deleted
+            - Desired state of the proxy host.
         required: false
         type: str
-        default: 'present'
+        default: present
         choices: ['absent', 'present']
 """
 
 EXAMPLES = r"""
-# create proxy host
-- name: create npm proxy
+- name: Create basic proxy host
   nils_ost.proxymanager.proxy:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    forward_host: "192.168.1.234"
-    forward_port: 81
-    certificate_id: "{{ some_cert.item.id }}"
+    domain_name: "example.com"
+    forward_host: "192.168.1.100"
+    forward_port: 8080
     state: present
   delegate_to: localhost
 
-# enable caching for formaly created proxy
-- name: update npm proxy
-  nils_ost.proxymanager.proxy:
-    url: "{{ npm.url }}"
-    token: "{{ npm.token }}"
-    domain_name: "some.domain"
-    forward_host: "192.168.1.234"
-    forward_port: 81
-    enable_caching: True
-    certificate_id: "{{ some_cert.item.id }}"
-    state: present
-  delegate_to: localhost
-
-# create proxy with HSTS and security features
-- name: create secure npm proxy
+- name: Create proxy with SSL certificate
   nils_ost.proxymanager.proxy:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
     domain_name: "secure.example.com"
-    forward_host: "10.10.2.110"
+    forward_host: "192.168.1.100"
+    forward_port: 8080
+    certificate_id: "{{ cert.item.id }}"
+    force_ssl: true
+    state: present
+  delegate_to: localhost
+
+- name: Create proxy with HSTS and security features
+  nils_ost.proxymanager.proxy:
+    url: "{{ npm.url }}"
+    token: "{{ npm.token }}"
+    domain_name: "secure.example.com"
+    forward_host: "192.168.1.100"
     forward_port: 443
     forward_scheme: https
     certificate_id: "{{ cert.item.id }}"
@@ -179,8 +215,7 @@ EXAMPLES = r"""
     state: present
   delegate_to: localhost
 
-# create proxy with custom nginx configuration
-- name: create npm proxy with advanced config
+- name: Create proxy with custom nginx configuration
   nils_ost.proxymanager.proxy:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
@@ -194,12 +229,45 @@ EXAMPLES = r"""
     state: present
   delegate_to: localhost
 
-# delete the formaly created and updated proxy
-- name: delete npm proxy
+- name: Create proxy with custom location blocks
   nils_ost.proxymanager.proxy:
     url: "{{ npm.url }}"
     token: "{{ npm.token }}"
-    domain_name: "some.domain"
+    domain_name: "app.example.com"
+    forward_host: "192.168.1.100"
+    forward_port: 80
+    certificate_id: "{{ cert.item.id }}"
+    force_ssl: true
+    locations:
+      - path: "/api"
+        forward_scheme: "http"
+        forward_host: "192.168.1.200"
+        forward_port: 8080
+        advanced_config: "proxy_read_timeout 300s;"
+      - path: "/admin"
+        forward_scheme: "https"
+        forward_host: "192.168.1.201"
+        forward_port: 443
+    state: present
+  delegate_to: localhost
+
+- name: Update proxy to enable caching
+  nils_ost.proxymanager.proxy:
+    url: "{{ npm.url }}"
+    token: "{{ npm.token }}"
+    domain_name: "example.com"
+    forward_host: "192.168.1.100"
+    forward_port: 8080
+    enable_caching: true
+    allow_websockets: true
+    state: present
+  delegate_to: localhost
+
+- name: Delete proxy host
+  nils_ost.proxymanager.proxy:
+    url: "{{ npm.url }}"
+    token: "{{ npm.token }}"
+    domain_name: "example.com"
     state: absent
   delegate_to: localhost
 """
@@ -207,101 +275,111 @@ EXAMPLES = r"""
 RETURN = r"""
 item:
     description:
-        - the item corresponding to domain_name created, updated or found on npm. might be None in case of errors or deletion
-    type: dict or None
-    returned: always
+        - The proxy host item that was created, updated, or found.
+        - Returns null when state is absent or in case of errors.
+    type: dict
+    returned: when state=present
+    sample:
+        id: 1
+        created_on: "2025-01-01 12:00:00"
+        modified_on: "2025-01-01 12:00:00"
+        owner_user_id: 1
+        domain_names:
+            - example.com
+        forward_host: "192.168.1.100"
+        forward_port: 8080
+        forward_scheme: "http"
+        access_list_id: 0
+        certificate_id: 0
+        ssl_forced: false
+        caching_enabled: false
+        block_exploits: false
+        advanced_config: ""
+        meta: {}
+        allow_websocket_upgrade: false
+        http2_support: false
+        hsts_enabled: false
+        hsts_subdomains: false
+        enabled: true
 """
 
+from ansible.module_utils.basic import AnsibleModule
 
-def data_as_expected(d1, d2):
-    # Note: 'locations' and 'meta' are intentionally excluded from comparison
-    # - locations: complex array structure, future feature (see TODO.md)
-    # - meta: read-only API response field
-    keys = [
-        "domain_names",
-        "forward_scheme",
-        "forward_host",
-        "forward_port",
-        "caching_enabled",
-        "allow_websocket_upgrade",
-        "certificate_id",
-        "ssl_forced",
-        "http2_support",
-        "hsts_enabled",
-        "hsts_subdomains",
-        "trust_forwarded_proto",
-        "advanced_config",
-        "block_exploits",
-        "access_list_id",
-    ]
-    for k in keys:
-        if k not in d1:
-            return False
-        if k not in d2:
-            return False
-        if not d1.get(k) == d2.get(k):
-            return False
-    return True
+from ansible_collections.nils_ost.proxymanager.plugins.module_utils.client import (  # noqa: E402
+    NginxProxyManagerAPIError,
+    NginxProxyManagerAuthError,
+    NginxProxyManagerClient,
+    NginxProxyManagerError,
+    NginxProxyManagerNotFoundError,
+    compare_dicts,
+    search_by_domain,
+)
+
+__all__ = [
+    "NginxProxyManagerAPIError",
+    "NginxProxyManagerAuthError",
+    "NginxProxyManagerClient",
+    "NginxProxyManagerError",
+    "NginxProxyManagerNotFoundError",
+    "compare_dicts",
+    "search_by_domain",
+    "validate_ssl_dependencies",
+]
 
 
-def search(url, token, name):
-    uri = f"{url}/api/nginx/proxy-hosts"
+def validate_ssl_dependencies(params):
+    """
+    Validate SSL-dependent parameters and return validation errors.
 
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
+    Args:
+        params: Dictionary of module parameters
 
-    response = requests.get(uri, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
+    Returns:
+        list: List of error messages (empty if valid)
+    """
+    errors = []
 
-    for item in response.json():
-        if name in item.get("domain_names", list()):
-            return (True, item)
-    return (True, None)
+    if params.get("hsts_enabled") and not params.get("force_ssl"):
+        errors.append(
+            "hsts_enabled requires force_ssl to be true. "
+            "HSTS (HTTP Strict Transport Security) only works with SSL/TLS enabled."
+        )
 
+    if params.get("hsts_subdomains") and not params.get("hsts_enabled"):
+        errors.append(
+            "hsts_subdomains requires hsts_enabled to be true. "
+            "Enable HSTS first before including subdomains."
+        )
 
-def create(url, token, data):
-    uri = f"{url}/api/nginx/proxy-hosts"
+    if params.get("hsts_subdomains") and not params.get("force_ssl"):
+        errors.append(
+            "hsts_subdomains requires force_ssl to be true. "
+            "HSTS subdomains only work with SSL/TLS enabled."
+        )
 
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
+    if params.get("force_ssl") and params.get("certificate_id", 0) == 0:
+        errors.append(
+            "force_ssl requires a valid certificate_id (currently 0). "
+            "Please specify a certificate_id to enable SSL."
+        )
 
-    response = requests.post(uri, json=data, headers=headers)
-    if not response.status_code == 201:
-        return (False, response.text)
-    return (True, response.json())
+    if params.get("http2_support") and params.get("certificate_id", 0) == 0:
+        errors.append(
+            "http2_support requires a valid certificate_id (currently 0). "
+            "HTTP/2 is typically used with TLS and requires a certificate."
+        )
 
-
-def update(url, token, item, data):
-    uri = f"{url}/api/nginx/proxy-hosts/{item}"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.put(uri, json=data, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-    return (True, response.json())
-
-
-def delete(url, token, item):
-    uri = f"{url}/api/nginx/proxy-hosts/{item}"
-
-    headers = dict()
-    headers["Authorization"] = "Bearer %s" % token
-    headers["Content-Type"] = "application/json"
-
-    response = requests.delete(uri, headers=headers)
-    if not response.status_code == 200:
-        return (False, response.text)
-    return (True, response.json())
+    return errors
 
 
 def run_module():
-    # define available arguments/parameters a user can pass to the module
+    """
+    Execute the proxy module.
+
+    This function handles the main logic for managing proxy hosts.
+    It validates input parameters, manages API communication, and ensures
+    idempotent create/update/delete operations.
+    """
     module_args = dict(
         url=dict(type="str", required=True),
         token=dict(type="str", required=True, no_log=True),
@@ -325,44 +403,53 @@ def run_module():
         advanced_config=dict(type="str", required=False, default=""),
         block_exploits=dict(type="bool", required=False, default=False),
         access_list_id=dict(type="int", required=False, default=0),
+        locations=dict(
+            type="list",
+            required=False,
+            default=[],
+            elements="dict",
+            options=dict(
+                path=dict(type="str", required=True),
+                forward_scheme=dict(
+                    type="str",
+                    required=False,
+                    default="http",
+                    choices=["http", "https"],
+                ),
+                forward_host=dict(type="str", required=True),
+                forward_port=dict(type="int", required=True),
+                advanced_config=dict(type="str", required=False, default=""),
+            ),
+        ),
         state=dict(type="str", default="present", choices=["absent", "present"]),
     )
 
-    # seed the result dict in the object
-    # we primarily care about changed and state
-    # changed is if this module effectively modified the target
-    # state will include any data that you want your module to pass back
-    # for consumption, for example, in a subsequent task
-    result = dict(
-        changed=False,
-        item=None,
-    )
+    result = dict(changed=False, item=None)
 
-    # the AnsibleModule object will be our abstraction working with Ansible
-    # this includes instantiation, a couple of common attr would be the
-    # args/params passed to the execution, as well as if the module
-    # supports check mode
-    module = AnsibleModule(
-        argument_spec=module_args,
-        supports_check_mode=True,
-    )
+    module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
 
     try:
-        url = module.params["url"]
-        token = module.params["token"]
-
         if (
             module.params["state"] == "present"
             and module.params.get("forward_host") is None
         ):
             module.fail_json(
-                msg='"forward_host" is required if "state" is "present"',
-                **result,
+                msg='"forward_host" is required when state is "present"', **result
             )
 
-        success, item = search(url, token, module.params["domain_name"])
-        if not success:
-            module.fail_json(msg=f"error on searching for item: {item}", **result)
+        if module.params["state"] == "present":
+            validation_errors = validate_ssl_dependencies(module.params)
+            if validation_errors:
+                module.fail_json(
+                    msg="SSL configuration validation failed: "
+                    + "; ".join(validation_errors),
+                    **result,
+                )
+
+        client = NginxProxyManagerClient(module.params["url"], module.params["token"])
+
+        items = client.get("/api/nginx/proxy-hosts")
+        item = search_by_domain(items, module.params["domain_name"])
 
         if module.params["state"] == "present":
             data = dict(
@@ -381,69 +468,81 @@ def run_module():
                 advanced_config=module.params["advanced_config"],
                 block_exploits=module.params["block_exploits"],
                 access_list_id=module.params["access_list_id"],
-                # NOTE: locations and meta are read-only fields returned by API
-                # and should NOT be included in create/update requests
+                locations=module.params["locations"],
+                meta={},
             )
 
+            compare_keys = [
+                "domain_names",
+                "forward_scheme",
+                "forward_host",
+                "forward_port",
+                "caching_enabled",
+                "allow_websocket_upgrade",
+                "certificate_id",
+                "ssl_forced",
+                "http2_support",
+                "hsts_enabled",
+                "hsts_subdomains",
+                "trust_forwarded_proto",
+                "advanced_config",
+                "block_exploits",
+                "access_list_id",
+                "locations",
+            ]
+
             if item is None:
                 if not module.check_mode:
-                    success, item = create(url, token, data)
-                    if not success:
-                        module.fail_json(
-                            msg=f"error on createing new item: {item}",
-                            **result,
-                        )
+                    item = client.post("/api/nginx/proxy-hosts", data)
                     result["changed"] = True
                     result["item"] = item
-                    module.exit_json(msg=f"created item: {item['id']}", **result)
+                    module.exit_json(msg="Created proxy host: {0}".format(item["id"]), **result)
                 else:
                     result["changed"] = True
                     result["item"] = data
-                    module.exit_json(msg="would have created a item", **result)
-
+                    module.exit_json(msg="Would have created proxy host", **result)
             else:
                 if not module.check_mode:
-                    if data_as_expected(data, item):
+                    if compare_dicts(data, item, compare_keys):
                         result["item"] = item
                         module.exit_json(
-                            msg=f"item is already as expected: {item['id']}",
-                            **result,
+                            msg="Proxy host already configured: {0}".format(item["id"]), **result
                         )
-                    success, item = update(url, token, item.get("id"), data)
-                    if not success:
-                        module.fail_json(
-                            msg=f"error on updateing existing item: {item}",
-                            **result,
-                        )
+                    item = client.put("/api/nginx/proxy-hosts/{0}".format(item["id"]), data)
                     result["changed"] = True
                     result["item"] = item
-                    module.exit_json(msg=f"updated item: {item['id']}", **result)
+                    module.exit_json(msg="Updated proxy host: {0}".format(item["id"]), **result)
                 else:
-                    result["changed"] = True
+                    result["changed"] = not compare_dicts(data, item, compare_keys)
                     result["item"] = data
                     module.exit_json(
-                        msg=f"would have updated item: {item['id']}",
-                        **result,
+                        msg="Would have updated proxy host: {0}".format(item["id"]), **result
                     )
-
         else:
             if item is None:
-                module.exit_json(msg="item is already deleted", **result)
+                module.exit_json(msg="Proxy host already absent", **result)
             if not module.check_mode:
-                success, item = delete(url, token, item.get("id"))
-                if not success:
-                    module.fail_json(msg=f"error on deleteing item: {item}", **result)
+                client.delete("/api/nginx/proxy-hosts/{0}".format(item["id"]))
                 result["changed"] = True
-                module.exit_json(msg="deleted item", **result)
+                module.exit_json(msg="Deleted proxy host", **result)
             else:
                 result["changed"] = True
-                module.exit_json(msg="would have deleted a item", **result)
+                module.exit_json(msg="Would have deleted proxy host", **result)
 
-    except Exception as e:
-        module.fail_json(msg=f"Error: {e}", **result)
+    except NginxProxyManagerAPIError as e:
+        error_msg = "API error: {0} (HTTP {1})".format(str(e), e.status_code)
+        if e.response_text:
+            error_msg += " - Response: {0}".format(e.response_text)
+        module.fail_json(
+            msg=error_msg,
+            **result,
+        )
+    except NginxProxyManagerError as e:
+        module.fail_json(msg="Nginx Proxy Manager error: {0}".format(str(e)), **result)
 
 
 def main():
+    """Module entry point for Ansible execution."""
     run_module()
 
 
