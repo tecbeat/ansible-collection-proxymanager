@@ -1,0 +1,14 @@
+---
+major_changes:
+  - "Refactored all modules to use a shared HTTP client (``plugins/module_utils/client.py``) instead of inline requests calls. This improves error handling, testability, and consistency across all modules."
+  - "Added new ``access_list`` module to manage NPM access lists (HTTP basic auth + IP allow/deny rules)."
+minor_changes:
+  - "Added ``plugins/doc_fragments/auth.py`` shared documentation fragment for ``url`` and ``token`` options."
+  - "Added ``locations`` option to proxy module for custom location blocks that forward to different backends."
+  - "Added ``trust_forwarded_proto`` option to proxy module."
+  - "All modules now support ``check_mode``."
+  - "All modules now validate SSL-dependent parameters (e.g. force_ssl requires certificate_id)."
+  - "Improved documentation with comprehensive examples and return value descriptions."
+  - "Token module now uses a single ``url`` parameter instead of separate protocol/host/port parameters."
+  - "Added unit tests for all modules."
+  - "Added integration test playbook with docker-compose for local testing."
