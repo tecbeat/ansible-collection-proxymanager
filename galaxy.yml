@@ -17,6 +17,7 @@ readme: README.md
 # @nicks:irc/im.site#channel'
 authors:
   - Nils Ost (@nils-ost)
+  - Samuel Assmann (@tecbeat)
 
 ### OPTIONAL but strongly recommended
 # A short summary description of the collection
@@ -62,6 +63,7 @@ build_ignore:
   - changelogs/.plugin-cache.yaml
   - venv
   - dev
+  - tests
   - .envrc
   - .flake8
   - .pre-commit-config.yaml
