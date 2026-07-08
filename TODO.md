@@ -1,24 +1,29 @@
 # TODO
 
+## Completed
+
+### ~~Add support for locations parameter~~ (Done)
+
+Implemented in the `proxy` module. Users can now define custom location blocks
+with `path`, `forward_scheme`, `forward_host`, `forward_port`, and `advanced_config`.
+
+### ~~Add access_list module~~ (Done)
+
+New `access_list` module supports HTTP Basic auth entries and IP-based allow/deny rules.
+
 ## Future Enhancements
 
-### Add support for locations parameter
+### Add support for more DNS providers for certificates
 
-- The `locations` parameter in the NPM API is a complex array of objects that allows configuring custom location blocks
-- This feature should allow users to define custom location paths with specific configurations
-- Example structure:
-  ```json
-  "locations": [
-    {
-      "path": "/api",
-      "forward_scheme": "http",
-      "forward_host": "backend.internal",
-      "forward_port": 8080
-    }
-  ]
-  ```
-- Implementation considerations:
-  - Define a proper schema for location objects
-  - Add validation for location parameters
-  - Update documentation with examples
-  - Ensure backward compatibility
+Currently only `domainoffensive` is supported for automated Let's Encrypt certificate
+creation. Other popular providers (Cloudflare, Route53, etc.) could be added.
+
+### Add dead_hosts module
+
+NPM supports "dead hosts" (404 pages for specific domains). A module to manage these
+would complete the coverage of all NPM host types.
+
+### Add streams module
+
+NPM supports TCP/UDP stream proxying. A module to manage streams would be useful
+for non-HTTP services.

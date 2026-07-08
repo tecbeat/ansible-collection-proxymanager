@@ -22,8 +22,23 @@ PEP440 is the schema used to describe the versions of Ansible.
 
 ## External requirements
 
-Currently only the `requests` Python library is required by this collection, to be able to run the modules.
-As this collection is intended to do it's module call `delegate_to: localhost` it's enough to `pip install requests` locally.
+The `requests` Python library is required by this collection to communicate with the NPM REST API.
+As all module calls should use `delegate_to: localhost`, install it locally:
+
+```bash
+pip install requests
+```
+
+## Architecture
+
+The collection uses a shared HTTP client (`plugins/module_utils/client.py`) that provides:
+- `NginxProxyManagerClient` - session-based HTTP client with typed error handling
+- `authenticate()` - one-shot token exchange helper
+- Common helpers (`compare_dicts`, `search_by_domain`) for idempotent operations
+
+All CRUD modules share authentication options via `plugins/doc_fragments/auth.py`.
+
+Use `ansible-doc nils_ost.proxymanager.<module>` to see full documentation for each module.
 
 ## Included content
 
@@ -31,10 +46,11 @@ As this collection is intended to do it's module call `delegate_to: localhost` i
 ### Modules
 Name | Description
 --- | ---
-[nils_ost.proxymanager.certificate](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.certificate_module.rst)|create or delete npm certificate
-[nils_ost.proxymanager.proxy](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.proxy_module.rst)|create, update or delete npm proxy
-[nils_ost.proxymanager.redirection](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.redirection_module.rst)|create, update or delete npm redirection
-[nils_ost.proxymanager.token](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.token_module.rst)|fetch npm API token (login)
+[nils_ost.proxymanager.token](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.token_module.rst)|Authenticate with the NPM API and obtain a bearer token
+[nils_ost.proxymanager.proxy](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.proxy_module.rst)|Create, update, or delete proxy hosts (with locations, SSL, HSTS)
+[nils_ost.proxymanager.redirection](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.redirection_module.rst)|Create, update, or delete HTTP redirections
+[nils_ost.proxymanager.certificate](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/docs/nils_ost.proxymanager.certificate_module.rst)|Create or delete SSL/TLS certificates (Let's Encrypt DNS-01)
+[nils_ost.proxymanager.access_list](https://github.com/nils-ost/ansible-collection-proxymanager/blob/main/plugins/modules/access_list.py)|Create, update, or delete access lists (HTTP basic auth + IP rules)
 
 <!--end collection content-->
 
